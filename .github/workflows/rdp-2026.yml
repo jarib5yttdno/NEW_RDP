@@ -21,7 +21,7 @@ jobs:
     timeout-minutes: 360
 
     env:
-      RDP_USER: nill
+      RDP_USER: Nillxd
       RDP_PASS: nill1234@
       MAIN_RUNTIME_MIN: 360
 
