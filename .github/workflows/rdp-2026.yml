@@ -22,7 +22,7 @@ jobs:
 
     env:
       RDP_USER: nill
-      RDP_PASS: nill
+      RDP_PASS: nill1234@
       MAIN_RUNTIME_MIN: 360
 
     steps:
