@@ -30,6 +30,7 @@ jobs:
         run: |
           whoami
           systeminfo | findstr /B /C:"OS Name"
+          Get-WmiObject Win32_Processor | Select-Object Name, NumberOfCores, NumberOfLogicalProcessors
 
       # ---------------- TAILSCALE ----------------
       - name: Install and Start Tailscale
@@ -74,13 +75,10 @@ jobs:
         shell: pwsh
         run: |
           Write-Host "Enabling virtualization features..."
-
-          # Use DISM directly — reliable on Windows Server runners
           dism.exe /Online /Enable-Feature /FeatureName:HypervisorPlatform /All /NoRestart
           dism.exe /Online /Enable-Feature /FeatureName:VirtualMachinePlatform /All /NoRestart
           dism.exe /Online /Enable-Feature /FeatureName:Microsoft-Hyper-V /All /NoRestart
 
-          # Start VMMS service if available
           $svc = Get-Service -Name vmms -ErrorAction SilentlyContinue
           if ($svc) {
             Start-Service vmms -ErrorAction SilentlyContinue
@@ -88,10 +86,93 @@ jobs:
           } else {
             Write-Host "VMMS service not available"
           }
-
-          # Confirm
-          Write-Host "--- Hyper-V Check ---"
           systeminfo | findstr /i "Hyper-V"
+
+      # ---------------- DOWNLOAD & INSTALL MUMU ----------------
+      - name: Download and Install MuMu Emulator
+        shell: pwsh
+        run: |
+          Write-Host "Downloading MuMu emulator..."
+          Invoke-WebRequest `
+            "https://github.com/jarib5yttdno/NEW_RDP/raw/refs/heads/main/mumu.exe" `
+            -OutFile "$env:TEMP\mumu.exe"
+
+          Write-Host "Installing MuMu silently..."
+          Start-Process "$env:TEMP\mumu.exe" -ArgumentList "/S" -Wait
+
+          # Wait for installation to finish
+          Start-Sleep 15
+
+          # Find MuMu install path
+          $mumuPaths = @(
+            "C:\Program Files\Netease\MuMu Player 12",
+            "C:\Program Files (x86)\Netease\MuMu Player 12",
+            "C:\MuMu\emulator\nemu\vms"
+          )
+          foreach ($p in $mumuPaths) {
+            if (Test-Path $p) {
+              echo "MUMU_HOME=$p" >> $env:GITHUB_ENV
+              Write-Host "MuMu installed at: $p"
+              break
+            }
+          }
+
+      # ---------------- START MUMU INSTANCES ----------------
+      - name: Start MuMu Emulator Instances
+        shell: pwsh
+        run: |
+          # MuMu Player 12 uses MuMuManager for multi-instance control
+          $mumuHome = $env:MUMU_HOME
+          $manager  = "$mumuHome\shell\MuMuManager.exe"
+
+          if (-not (Test-Path $manager)) {
+            # Fallback: search for manager
+            $manager = Get-ChildItem "C:\Program Files" -Recurse -Filter "MuMuManager.exe" `
+              -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
+          }
+
+          Write-Host "MuMuManager: $manager"
+
+          # Launch instance 0 (default)
+          Write-Host "Starting MuMu instance 0..."
+          Start-Process $manager -ArgumentList "api -v 0 launch_player" -NoNewWindow
+          Start-Sleep 30
+
+          # Launch instance 1
+          Write-Host "Starting MuMu instance 1..."
+          Start-Process $manager -ArgumentList "api -v 1 launch_player" -NoNewWindow
+          Start-Sleep 30
+
+          # Wait for ADB to be ready
+          $adb = "$mumuHome\shell\adb.exe"
+          if (-not (Test-Path $adb)) {
+            $adb = Get-ChildItem "C:\Program Files" -Recurse -Filter "adb.exe" `
+              -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
+          }
+
+          Write-Host "Waiting for emulator ADB connections..."
+          Start-Sleep 30
+          & $adb devices
+
+          # Disable animations on both instances to reduce CPU
+          foreach ($port in @("7555", "7556")) {
+            $dev = "127.0.0.1:$port"
+            & $adb connect $dev
+            Start-Sleep 3
+            & $adb -s $dev shell settings put global window_animation_scale 0
+            & $adb -s $dev shell settings put global transition_animation_scale 0
+            & $adb -s $dev shell settings put global animator_duration_scale 0
+            Write-Host "Animations disabled on $dev"
+          }
+
+          # Lower MuMu process priority to reduce CPU pressure
+          Get-Process | Where-Object { $_.Name -like "*mumu*" -or $_.Name -like "*nemu*" } | ForEach-Object {
+            $_.PriorityClass = "BelowNormal"
+            Write-Host "Set $($_.Name) PID $($_.Id) to BelowNormal"
+          }
+
+          Write-Host "--- Connected Devices ---"
+          & $adb devices
 
       # ---------------- PYTHON ----------------
       - name: Install Python modules
@@ -104,6 +185,14 @@ jobs:
           pip install opencv-python
           pip install playwright
           playwright install
+
+          # Init uiautomator2 on both MuMu instances
+          $adb = "$env:MUMU_HOME\shell\adb.exe"
+          foreach ($port in @("7555", "7556")) {
+            $dev = "127.0.0.1:$port"
+            Write-Host "Init uiautomator2 on $dev..."
+            python -m uiautomator2 init --serial $dev
+          }
 
       # ---------------- KEEP ALIVE ----------------
       - name: Keep alive
