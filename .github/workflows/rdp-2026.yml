@@ -73,28 +73,25 @@ jobs:
       - name: Enable Hyper-V & Virtualization
         shell: pwsh
         run: |
-          Write-Host "Enabling Hyper-V and virtualization features..."
+          Write-Host "Enabling virtualization features..."
 
-          Enable-WindowsOptionalFeature -Online -FeatureName Microsoft-Hyper-V-All -All -NoRestart
-          Enable-WindowsOptionalFeature -Online -FeatureName VirtualMachinePlatform -All -NoRestart
-          Enable-WindowsOptionalFeature -Online -FeatureName HypervisorPlatform -All -NoRestart
+          # Use DISM directly — reliable on Windows Server runners
+          dism.exe /Online /Enable-Feature /FeatureName:HypervisorPlatform /All /NoRestart
+          dism.exe /Online /Enable-Feature /FeatureName:VirtualMachinePlatform /All /NoRestart
+          dism.exe /Online /Enable-Feature /FeatureName:Microsoft-Hyper-V /All /NoRestart
 
-          # Start Hyper-V Virtual Machine Management service
-          $hvStatus = Get-Service -Name vmms -ErrorAction SilentlyContinue
-          if ($hvStatus) {
+          # Start VMMS service if available
+          $svc = Get-Service -Name vmms -ErrorAction SilentlyContinue
+          if ($svc) {
             Start-Service vmms -ErrorAction SilentlyContinue
-            Write-Host "Hyper-V VMMS Status: $((Get-Service vmms).Status)"
+            Write-Host "Hyper-V VMMS: $((Get-Service vmms).Status)"
           } else {
-            Write-Host "Hyper-V VMMS service not found"
+            Write-Host "VMMS service not available"
           }
 
-          # Show virtualization info
-          Write-Host "--- Virtualization Info ---"
+          # Confirm
+          Write-Host "--- Hyper-V Check ---"
           systeminfo | findstr /i "Hyper-V"
-
-          # Verify with PowerShell
-          $feature = Get-WindowsOptionalFeature -Online -FeatureName Microsoft-Hyper-V
-          Write-Host "Hyper-V Feature State: $($feature.State)"
 
       # ---------------- PYTHON ----------------
       - name: Install Python modules
